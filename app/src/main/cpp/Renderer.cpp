@@ -9,6 +9,8 @@
 #include <media/NdkImageReader.h>
 #include "string"
 #include <android/log.h>
+#include <unistd.h>
+#include <EGL/egl.h>
 
 #define TAG "Renderer"
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
@@ -54,16 +56,15 @@ namespace {
 }
 
 bool Renderer::init(ANativeWindow* window) {
-
     display_ = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     if (display_ == EGL_NO_DISPLAY) {
-        for (int i=0;i<100;i++){
-            LOGE("EGL_NO_DISPLAY");
-
-        }
+        LOGE("Failed to get EGL display");
         return false;
     }
-    eglInitialize(display_, nullptr, nullptr);
+    if (!eglInitialize(display_, nullptr, nullptr)) {
+        LOGE("Failed to initialize EGL");
+        return false;
+    }
 
     const EGLint configAttribs[] = {
             EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
@@ -73,20 +74,34 @@ bool Renderer::init(ANativeWindow* window) {
             EGL_RED_SIZE, 8,
             EGL_NONE
     };
+
     EGLConfig config;
     EGLint numConfigs;
-    eglChooseConfig(display_, configAttribs, &config, 1, &numConfigs);
+    if (!eglChooseConfig(display_, configAttribs, &config, 1, &numConfigs) || numConfigs <= 0) {
+        LOGE("Failed to choose EGL config");
+        return false;
+    }
 
     EGLint contextAttribs[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };
     context_ = eglCreateContext(display_, config, EGL_NO_CONTEXT, contextAttribs);
+    if (context_ == EGL_NO_CONTEXT) {
+        LOGE("Failed to create EGL context");
+        return false;
+    }
+
     surface_ = eglCreateWindowSurface(display_, config, window, nullptr);
-    eglMakeCurrent(display_, surface_, surface_, context_);
+    if (surface_ == EGL_NO_SURFACE) {
+        LOGE("Failed to create EGL surface");
+        return false;
+    }
 
-    glGenBuffers(1, &vbo_);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo_);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(QUAD), QUAD, GL_STATIC_DRAW);
-
-    return createProgram();
+    if (!eglMakeCurrent(display_, surface_, surface_, context_)) {
+        EGLint eglError = eglGetError();
+        LOGE("Failed to make EGL context current, EGL error: %x", eglError);
+        return false;
+    }
+    LOGE("returninig rendinit true");
+    return true;
 }
 
 bool Renderer::createProgram() {
@@ -125,8 +140,8 @@ void Renderer::createTextures(int w, int h) {
 
 void Renderer::uploadYUV(AImage* image) {
 
-    for (int i = 0; i<100;i++){
-        LOGI("uploadYUV momochron");
+    for (int i = 0; i<2;i++){
+        LOGI("uploadYUV YUVYUVYUVYUVYUVYUV");
     }
     int yStride, uvStride;
     uint8_t* yPlane = nullptr;
@@ -157,18 +172,28 @@ void Renderer::uploadYUV(AImage* image) {
     glBindTexture(GL_TEXTURE_2D, texV_);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width / 2, height / 2,
                     GL_LUMINANCE, GL_UNSIGNED_BYTE, vPlane);
-}
 
+
+    LOGI("Window size: %d x %d", width, height);
+
+}
+/*
 void Renderer::draw() {
-    if (!frameReady_) {
-        glClearColor(1.0f, 0.0f, 0.0f, 1.0f);  // Red
-        glClear(GL_COLOR_BUFFER_BIT);
-        eglSwapBuffers(display_, surface_);
-        return;
-    }
-    for (int i = 0; i<100; i++){
-        LOGE("Renderer::draw");
-    }
+//    int wait_ms = 0;
+//    while (!frameReady_ && wait_ms < 100) {
+//        usleep(1000);  // sleep 1ms
+//        wait_ms++;
+//    }
+//
+//    if (!frameReady_) {
+//        LOGE("Still not ready after 100ms wait");
+//        glClearColor(1.0f, 0.0f, 0.0f, 1.0f);  // Red
+//        glClear(GL_COLOR_BUFFER_BIT);
+//        eglSwapBuffers(display_, surface_);
+//        return;
+//    }
+
+
     glClear(GL_COLOR_BUFFER_BIT);
 
     glUseProgram(prog_);
@@ -199,10 +224,12 @@ void Renderer::draw() {
     eglSwapBuffers(display_, surface_);
 
 
-//    glViewport(0, 0, 1280, 720);  // optionally get window size dynamically
-//    glClearColor(1.0f, 0.0f, 0.0f, 1.0f);  // Red
-//    glClear(GL_COLOR_BUFFER_BIT);
-//    eglSwapBuffers(display_, surface_);
+    glViewport(0, 0, 1280, 720);  // optionally get window size dynamically
+    glClearColor(1.0f, 0.0f, 0.0f, 1.0f);  // Red
+    glClear(GL_COLOR_BUFFER_BIT);
+    eglSwapBuffers(display_, surface_);
+    glClearColor(1.0f, 0.0f, 0.0f, 1.0f);  // Red
+
 //    glClear(GL_COLOR_BUFFER_BIT);
 //
 //    glUseProgram(prog_);
@@ -230,6 +257,78 @@ void Renderer::draw() {
 //
 //    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 //    eglSwapBuffers(display_, surface_);
+}
+
+void Renderer::draw() {
+
+    EGLint width, height;
+    eglQuerySurface(display_, surface_, EGL_WIDTH, &width);
+    eglQuerySurface(display_, surface_, EGL_HEIGHT, &height);
+    LOGI("Surface dimensions: %d x %d", width, height);
+
+
+    display_ = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    if (display_ == EGL_NO_DISPLAY) {
+        LOGE("Failed to get EGL display");
+    }
+
+    if (!eglInitialize(display_, nullptr, nullptr)) {
+        LOGE("Failed to initialize EGL");
+    }
+
+    if (display_ == EGL_NO_DISPLAY) {
+        LOGE("EGL_NO_DISPLAY: Unable to initialize EGL.");
+        return;
+    }
+    if (surface_ == EGL_NO_SURFACE) {
+        LOGE("EGL_NO_SURFACE: Unable to create surface.");
+        return;
+    }
+    if (context_ == EGL_NO_CONTEXT) {
+        LOGE("EGL_NO_CONTEXT: Unable to create EGL context.");
+        return;
+    }
+    LOGE("YO MAMA");
+    // Clear the screen with a red color
+    glClearColor(1.0f, 0.0f, 0.0f, 1.0f);  // Red color
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    // Swap buffers to display the red color
+    eglSwapBuffers(display_, surface_);
+    GLenum err = glGetError();
+    if (err != GL_NO_ERROR) {
+        LOGE("OpenGL Error: %x", err);
+    }
+
+}
+*/
+
+
+void Renderer::draw(ANativeWindow* window) {
+
+    EGLConfig config;
+
+//    if (surface_ == EGL_NO_SURFACE || !eglMakeCurrent(display_, surface_, surface_, context_)) {
+//        LOGE("Reinitializing EGL context and surface");
+//        // Recreate the surface and rebind the context
+//        surface_ = eglCreateWindowSurface(display_, config, window, nullptr);
+//        eglMakeCurrent(display_, surface_, surface_, context_);
+//    }
+
+    glClearColor(1.0f, 0.0f, 0.0f, 1.0f);  // Red color
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    // Set the OpenGL viewport to match the window size
+    int width = 1080;  // or dynamically get it
+    int height = 2340; // or dynamically get it
+    glViewport(0, 0, width, height);  // Set the viewport to the surface dimensions
+
+    // Swap the buffers to display the red color
+//    eglSwapBuffers(display_, surface_);
+    if (eglSwapBuffers(display_, surface_) == EGL_FALSE) {
+        EGLint eglError = eglGetError();  // Get the specific EGL error
+        LOGE("eglSwapBuffers failed, EGL error: %x", eglError);  // Log the error code
+    }
 }
 
 void Renderer::shutdown() {

@@ -33,7 +33,7 @@ public:
     void uploadYUV(AImage* image);
 
     /** Draw the most-recently uploaded frame */
-    void draw();
+    void draw(ANativeWindow* window);
 
     /** Destroy GL resources + EGL surface/context */
     void shutdown();

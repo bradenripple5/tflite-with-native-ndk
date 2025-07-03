@@ -8,6 +8,7 @@
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, "NativeCamera", __VA_ARGS__)
 
 bool NativeCamera::open(int w, int h, FrameCallback cb) {
+
     LOGE("native camera open called");
     frameCb_ = std::move(cb);
 
@@ -71,8 +72,13 @@ bool NativeCamera::open(int w, int h, FrameCallback cb) {
     ACaptureSessionOutputContainer_add(outputs_, output_);
 
     // 8. Create target and request
-    ACameraOutputTarget_create(wnd, &target_);
     ACameraDevice_createCaptureRequest(device_, TEMPLATE_PREVIEW, &req_);
+
+    ACameraOutputTarget_create(wnd, &target_);
+    // added to change frame rate
+    int32_t fpsRange[2] = {60, 60};
+    ACaptureRequest_setEntry_i32(req_, ACAMERA_CONTROL_AE_TARGET_FPS_RANGE, 2, fpsRange);
+
     ACaptureRequest_addTarget(req_, target_);
 
     // 9. Create session
@@ -93,16 +99,84 @@ bool NativeCamera::open(int w, int h, FrameCallback cb) {
     return true;
 }
 
+//void NativeCamera::onImage(void* ctx, AImageReader* reader) {
+//    LOGE("onImage in native camear");
+//    auto* self = static_cast<NativeCamera*>(ctx);
+//    AImage* img = nullptr;
+//    if (AImageReader_acquireLatestImage(reader, &img) == AMEDIA_OK && img) {
+//        self->frameCb_(img);
+//        AImage_delete(img);
+//    }
+//}
+
+void logYPlaneBits(AImage* img) {
+
+    uint8_t* yPlane = nullptr;
+    int yLen = 0;
+    media_status_t status = AImage_getPlaneData(img, 0, &yPlane, &yLen);
+    LOGE("getPlaneData status: %d, yPlane: %p, yLen: %d", status, yPlane, yLen);
+
+    if (AImage_getPlaneData(img, 0, &yPlane, &yLen) != AMEDIA_OK || !yPlane || yLen <= 0) {
+        LOGE("❌ Failed to get Y plane");
+        return ;
+    }
+
+    // Log first N bytes in binary
+    const int N = 64; // limit for sanity
+    std::string bitDump = "Y plane first 64 bytes as bits:\n";
+
+    for (int i = 0; i < std::min(N, yLen); ++i) {
+        for (int b = 7; b >= 0; --b) {
+            bitDump += (yPlane[i] & (1 << b)) ? '1' : '0';
+        }
+        bitDump += ' ';
+    }
+
+    LOGE("%s", bitDump.c_str());
+}
+
 void NativeCamera::onImage(void* ctx, AImageReader* reader) {
+
+    LOGE("📸 onImage triggered");
     auto* self = static_cast<NativeCamera*>(ctx);
     AImage* img = nullptr;
-    if (AImageReader_acquireLatestImage(reader, &img) == AMEDIA_OK && img) {
-        self->frameCb_(img);
-        AImage_delete(img);
+
+    media_status_t status = AImageReader_acquireLatestImage(reader, &img);
+    if (status != AMEDIA_OK) {
+        LOGE("❌ Failed to acquire image: %d", status);
+        return;
     }
+
+    if (!img) {
+        LOGE("❌ Image is NULL after acquisition");
+        return;
+    }
+
+    int width = -1, height = -1;
+    if (AImage_getWidth(img, &width) != AMEDIA_OK || AImage_getHeight(img, &height) != AMEDIA_OK) {
+        LOGE("❌ Failed to get image dimensions");
+    } else {
+        LOGE("✅ Image acquired: %dx%d", width, height);
+    }
+
+    if (self->frameCb_) {
+        LOGE("🔁 Calling frame callback...");
+        self->frameCb_(img);
+        LOGE("✅ Frame callback returned");
+    } else {
+        LOGE("⚠️ frameCb_ is null");
+    }
+    logYPlaneBits( img);
+
+    AImage_delete(img);
+    LOGE("🗑️ Image deleted");
 }
 
 void NativeCamera::close() {
+    for (int i = 0; i <100; i++){
+        LOGE("closing camera");
+
+    }
     if (session_) {
         ACameraCaptureSession_close(session_);
         session_ = nullptr;
