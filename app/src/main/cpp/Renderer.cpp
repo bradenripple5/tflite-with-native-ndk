@@ -56,7 +56,7 @@ namespace {
 }
 
 bool Renderer::init(ANativeWindow* window) {
-    display_ = eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    eglInitialize(display_, nullptr, nullptr);
     if (display_ == EGL_NO_DISPLAY) {
         LOGE("Failed to get EGL display");
         return false;
@@ -77,19 +77,19 @@ bool Renderer::init(ANativeWindow* window) {
 
     EGLConfig config;
     EGLint numConfigs;
-    if (!eglChooseConfig(display_, configAttribs, &config, 1, &numConfigs) || numConfigs <= 0) {
-        LOGE("Failed to choose EGL config");
-        return false;
-    }
-
+    eglChooseConfig(display_, configAttribs, &config_, 1, &numConfigs);
+        if (config_ == nullptr) {
+            LOGE("DRAWCHK config_ is null!");
+            return false;
+        }
     EGLint contextAttribs[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };
-    context_ = eglCreateContext(display_, config, EGL_NO_CONTEXT, contextAttribs);
+    context_ = eglCreateContext(display_, config_, EGL_NO_CONTEXT, contextAttribs);  // ✅
+    surface_ = eglCreateWindowSurface(display_, config_, window, nullptr);
     if (context_ == EGL_NO_CONTEXT) {
         LOGE("Failed to create EGL context");
         return false;
     }
 
-    surface_ = eglCreateWindowSurface(display_, config, window, nullptr);
     if (surface_ == EGL_NO_SURFACE) {
         LOGE("Failed to create EGL surface");
         return false;
@@ -114,6 +114,35 @@ bool Renderer::createProgram() {
     return true;
 }
 
+
+
+bool Renderer::recreateSurface(ANativeWindow* window) {
+    if (surface_ != EGL_NO_SURFACE) {
+        eglDestroySurface(display_, surface_);
+    }
+
+    if (window == nullptr) {
+        LOGE("recreateSurface: window is null!");
+        return false;
+    }
+
+    surface_ = eglCreateWindowSurface(display_, config_, window, nullptr);
+    if (surface_ == EGL_NO_SURFACE) {
+        EGLint err = eglGetError();
+        LOGE("recreateSurface: Failed to create surface, EGL error: 0x%x", err);
+        return false;
+    }
+
+    if (!eglMakeCurrent(display_, surface_, surface_, context_)) {
+        LOGE("recreateSurface: Failed to make EGL context current");
+        return false;
+    }
+
+    LOGI("recreateSurface: Surface successfully recreated.");
+    return true;
+}
+
+
 GLuint Renderer::compileShader(GLenum type, const char* src) {
     GLuint shader = glCreateShader(type);
     glShaderSource(shader, 1, &src, nullptr);
@@ -137,12 +166,40 @@ void Renderer::createTextures(int w, int h) {
     setupTex(texU_, w / 2, h / 2);
     setupTex(texV_, w / 2, h / 2);
 }
+void logPlaneBitsInRenderer(AImage* img, uint8_t* plane) {
+
+//    uint8_t* plane = nullptr;
+    int yLen = 0;
+    media_status_t status = AImage_getPlaneData(img, 0, &plane, &yLen);
+    LOGE("getPlaneData DEFG status: %d, plane: %p, yLen: %d", status, plane, yLen);
+
+    if (AImage_getPlaneData(img, 0, &plane, &yLen) != AMEDIA_OK || !plane || yLen <= 0) {
+        LOGE("❌ Failed to get Y plane");
+        return ;
+    }
+
+    // Log first N bytes in binary
+    const int N = 64; // limit for sanity
+    std::string bitDump = "U plane first 64 bytes as bits:\n";
+    LOGE("yplane in renderer 0 = %i",plane[0]);
+//    for (int i = 0; i < std::min(N, yLen); ++i) {
+//        for (int b = 7; b >= 0; --b) {
+//            LOGE("yplane[%i] = %i",b, yPlane[b]);
+//            bitDump += (yPlane[i] & (1 << b)) ? '1' : '0';
+//        }
+//        bitDump += ' ';
+//    }
+
+    LOGE("current bitdump = %s", bitDump.c_str());
+}
 
 void Renderer::uploadYUV(AImage* image) {
 
     for (int i = 0; i<2;i++){
         LOGI("uploadYUV YUVYUVYUVYUVYUVYUV");
     }
+
+
     int yStride, uvStride;
     uint8_t* yPlane = nullptr;
     uint8_t* uPlane = nullptr;
@@ -173,10 +230,12 @@ void Renderer::uploadYUV(AImage* image) {
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width / 2, height / 2,
                     GL_LUMINANCE, GL_UNSIGNED_BYTE, vPlane);
 
+    logPlaneBitsInRenderer(image, uPlane);
 
     LOGI("Window size: %d x %d", width, height);
 
 }
+
 /*
 void Renderer::draw() {
 //    int wait_ms = 0;
@@ -301,7 +360,7 @@ void Renderer::draw() {
     }
 
 }
-*/
+
 
 
 void Renderer::draw(ANativeWindow* window) {
@@ -314,14 +373,40 @@ void Renderer::draw(ANativeWindow* window) {
 //        surface_ = eglCreateWindowSurface(display_, config, window, nullptr);
 //        eglMakeCurrent(display_, surface_, surface_, context_);
 //    }
+    const GLfloat QUAD[] = {
+            -1.f, -1.f, 0.f, 1.f,
+            1.f, -1.f, 1.f, 1.f,
+            -1.f,  1.f, 0.f, 0.f,
+            1.f,  1.f, 1.f, 0.f,
+    };
 
+    GLuint aPos = glGetAttribLocation(prog_, "aPosition");
+    GLuint aTex = glGetAttribLocation(prog_, "aTexCoord");
+
+    glEnableVertexAttribArray(aPos);
+    glVertexAttribPointer(aPos, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat), QUAD);
+
+    glEnableVertexAttribArray(aTex);
+    glVertexAttribPointer(aTex, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat), QUAD + 2);
     glClearColor(1.0f, 0.0f, 0.0f, 1.0f);  // Red color
     glClear(GL_COLOR_BUFFER_BIT);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texY_);
+    glUniform1i(glGetUniformLocation(prog_, "texY"), 0);
+
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, texU_);
+    glUniform1i(glGetUniformLocation(prog_, "texU"), 1);
+
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, texV_);
+    glUniform1i(glGetUniformLocation(prog_, "texV"), 2);
 
     // Set the OpenGL viewport to match the window size
     int width = 1080;  // or dynamically get it
     int height = 2340; // or dynamically get it
     glViewport(0, 0, width, height);  // Set the viewport to the surface dimensions
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
     // Swap the buffers to display the red color
 //    eglSwapBuffers(display_, surface_);
@@ -329,7 +414,71 @@ void Renderer::draw(ANativeWindow* window) {
         EGLint eglError = eglGetError();  // Get the specific EGL error
         LOGE("eglSwapBuffers failed, EGL error: %x", eglError);  // Log the error code
     }
+//    LOGE("prog nullcheck = %b",(prog_ == nullptr));
+    glUseProgram(prog_);
+
 }
+*/
+
+
+void Renderer::draw() {
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glViewport(0, 0, 1080, 2340);  // TODO: Replace with actual surface size if dynamic
+
+    glUseProgram(prog_);
+
+    GLuint aPos = glGetAttribLocation(prog_, "aPosition");
+    GLuint aTex = glGetAttribLocation(prog_, "aTexCoord");
+
+    glEnableVertexAttribArray(aPos);
+    glVertexAttribPointer(aPos, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat), QUAD);
+
+    glEnableVertexAttribArray(aTex);
+    glVertexAttribPointer(aTex, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(GLfloat), QUAD + 2);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texY_);
+    glUniform1i(glGetUniformLocation(prog_, "texY"), 0);
+
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, texU_);
+    glUniform1i(glGetUniformLocation(prog_, "texU"), 1);
+
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, texV_);
+    glUniform1i(glGetUniformLocation(prog_, "texV"), 2);
+
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    if (eglMakeCurrent(display_, surface_, surface_, context_) != EGL_TRUE) {
+        LOGE("DRAWCHK Reinitializing EGL context and surface");
+
+        // Destroy old surface
+        if (surface_ != EGL_NO_SURFACE) {
+            LOGE("DRAWCHK surface_ != EGL_NO_SURFACE  ");
+            eglDestroySurface(display_, surface_);
+        }
+
+        // Recreate surface
+//        surface_ = eglCreateWindowSurface(display_, config_, window, nullptr);
+        if (surface_ == EGL_NO_SURFACE) {
+            LOGE("DRAWCHK Failed to recreate EGL surface");
+            return;
+        }
+
+        if (!eglMakeCurrent(display_, surface_, surface_, context_)) {
+            LOGE("DRAWCHK Failed to make EGL context current after surface recreation");
+            return;
+        }
+    }
+
+    if (eglSwapBuffers(display_, surface_) == EGL_FALSE) {
+        EGLint eglError = eglGetError();
+        LOGE("DRAWCHK eglSwapBuffers failed, EGL error: %x", eglError);
+    }
+}
+
 
 void Renderer::shutdown() {
     glDeleteBuffers(1, &vbo_);

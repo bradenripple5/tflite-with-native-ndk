@@ -15,7 +15,7 @@ bool NativeCamera::open(int w, int h, FrameCallback cb) {
     // 1. Create camera manager
     mgr_ = ACameraManager_create();
 
-        // 2. Get first available camera ID
+    // 2. Get first available camera ID
     ACameraIdList* ids = nullptr;
     if (ACameraManager_getCameraIdList(mgr_, &ids) != ACAMERA_OK || !ids || ids->numCameras == 0) {
         LOGE("No cameras found.");
@@ -124,7 +124,7 @@ void logYPlaneBits(AImage* img) {
     // Log first N bytes in binary
     const int N = 64; // limit for sanity
     std::string bitDump = "Y plane first 64 bytes as bits:\n";
-
+    LOGE("yplane bit in logYPlaneBits in NativeCamera = %i", yPlane[0]);
     for (int i = 0; i < std::min(N, yLen); ++i) {
         for (int b = 7; b >= 0; --b) {
             bitDump += (yPlane[i] & (1 << b)) ? '1' : '0';

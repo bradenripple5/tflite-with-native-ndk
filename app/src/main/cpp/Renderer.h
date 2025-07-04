@@ -33,10 +33,17 @@ public:
     void uploadYUV(AImage* image);
 
     /** Draw the most-recently uploaded frame */
-    void draw(ANativeWindow* window);
+    void draw();
 
     /** Destroy GL resources + EGL surface/context */
     void shutdown();
+
+    // function created because You must not re-create the EGL surface inside draw().
+
+    bool recreateSurface(ANativeWindow* window);
+    bool createProgram();
+    GLuint compileShader(GLenum type, const char* src);
+    void   createTextures(int w, int h);
 
 private:
     bool frameReady_ = false;
@@ -48,10 +55,9 @@ private:
     GLuint      texU_     = 0;
     GLuint      texV_     = 0;
     GLuint      vbo_      = 0;
+    EGLConfig config_ = nullptr;  // ← add this
 
-    bool createProgram();
-    GLuint compileShader(GLenum type, const char* src);
-    void   createTextures(int w, int h);
+
 };
 
 #endif //MY_APPLICATION_RENDERER_H

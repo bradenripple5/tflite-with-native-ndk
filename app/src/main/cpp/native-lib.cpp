@@ -25,7 +25,7 @@ static void onWindowCreated(ANativeActivity*, ANativeWindow* window) {
 
 
         gRenderer.uploadYUV(img);
-        gRenderer.draw(window);
+        gRenderer.draw();
         static struct timespec prev_time;
         struct timespec now;
 
