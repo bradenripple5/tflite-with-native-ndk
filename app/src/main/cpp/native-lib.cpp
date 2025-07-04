@@ -14,6 +14,8 @@ static void onWindowCreated(ANativeActivity*, ANativeWindow* window) {
     long average_milliseconds = 0;
     int avg_index =0;
     LOGI("onWindowCreated -- nativelib");
+    gRenderer.createProgram();  // ← MUST call this
+
     gRenderer.init(window);  // EGL + GL init
 //    gCamera.open(640, 480, [](AImage* img) {
 //        gRenderer.uploadYUV(img);   // sets frameReady_ = true

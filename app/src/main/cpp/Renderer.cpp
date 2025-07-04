@@ -56,13 +56,16 @@ namespace {
 }
 
 bool Renderer::init(ANativeWindow* window) {
-    eglInitialize(display_, nullptr, nullptr);
+    LOGE("INITCHK starting  rendinit ");
+
+    display_ = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     if (display_ == EGL_NO_DISPLAY) {
-        LOGE("Failed to get EGL display");
+        LOGE("INITCHK Failed to get EGL display");
         return false;
     }
+
     if (!eglInitialize(display_, nullptr, nullptr)) {
-        LOGE("Failed to initialize EGL");
+        LOGE("INITCHK Failed to initialize EGL");
         return false;
     }
 
@@ -79,28 +82,28 @@ bool Renderer::init(ANativeWindow* window) {
     EGLint numConfigs;
     eglChooseConfig(display_, configAttribs, &config_, 1, &numConfigs);
         if (config_ == nullptr) {
-            LOGE("DRAWCHK config_ is null!");
+            LOGE("INITCHK config_ is null!");
             return false;
         }
     EGLint contextAttribs[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE };
     context_ = eglCreateContext(display_, config_, EGL_NO_CONTEXT, contextAttribs);  // ✅
     surface_ = eglCreateWindowSurface(display_, config_, window, nullptr);
     if (context_ == EGL_NO_CONTEXT) {
-        LOGE("Failed to create EGL context");
+        LOGE("INITCHK  Failed to create EGL context");
         return false;
     }
 
     if (surface_ == EGL_NO_SURFACE) {
-        LOGE("Failed to create EGL surface");
+        LOGE("INITCHK Failed to create EGL surface");
         return false;
     }
 
     if (!eglMakeCurrent(display_, surface_, surface_, context_)) {
         EGLint eglError = eglGetError();
-        LOGE("Failed to make EGL context current, EGL error: %x", eglError);
+        LOGE("INITCHK Failed to make EGL context current, EGL error: %x", eglError);
         return false;
     }
-    LOGE("returninig rendinit true");
+    LOGE("INITCHK returninig rendinit true");
     return true;
 }
 
@@ -232,7 +235,7 @@ void Renderer::uploadYUV(AImage* image) {
 
     logPlaneBitsInRenderer(image, uPlane);
 
-    LOGI("Window size: %d x %d", width, height);
+    LOGI("uploadYUV Window size: %d x %d", width, height);
 
 }
 
