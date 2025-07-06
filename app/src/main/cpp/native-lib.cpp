@@ -55,6 +55,20 @@ public:
 
 
     void init(ANativeWindow* window) {
+
+
+        int32_t fpsRange[2] = {55, 60};  // constant 30 FPS
+        camera_status_t fpsResult = ACaptureRequest_setEntry_i32(
+                request_,
+                ACAMERA_CONTROL_AE_TARGET_FPS_RANGE,
+                2,
+                fpsRange
+        );
+
+        if (fpsResult != ACAMERA_OK) {
+            LOGE("Failed to set FPS range: %d", fpsResult);
+        }
+
         LOGI("Initializing NativeApp...");
         if (!window){
             LOGE("no window in ANativeWindow");
@@ -81,22 +95,64 @@ private:
     EGLConfig  config_;
 
     void initEGL(ANativeWindow* window) {
-        if (!window){
-            LOGE("no window in initEGL(ANativeWindow");
+        if (!window) {
+            LOGE("initEGL: window is null");
+            return;
         }
+
         display_ = eglGetDisplay(EGL_DEFAULT_DISPLAY);
-        eglInitialize(display_, nullptr, nullptr);
+        if (display_ == EGL_NO_DISPLAY) {
+            LOGE("initEGL: Unable to get EGL display");
+            return;
+        }
+
+        if (!eglInitialize(display_, nullptr, nullptr)) {
+            LOGE("initEGL: eglInitialize failed");
+            return;
+        }
+
         const EGLint attribs[] = {
                 EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
                 EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
                 EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8,
+                EGL_ALPHA_SIZE, 8,
+                EGL_DEPTH_SIZE, 16,
                 EGL_NONE
         };
+
         EGLint numConfigs;
-        eglChooseConfig(display_, attribs, &config_, 1, &numConfigs);
-        context_ = eglCreateContext(display_, config_, EGL_NO_CONTEXT, (EGLint[]){ EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE });
+        if (!eglChooseConfig(display_, attribs, &config_, 1, &numConfigs) || numConfigs == 0) {
+            LOGE("initEGL: eglChooseConfig failed");
+            return;
+        }
+
         surface_ = eglCreateWindowSurface(display_, config_, window, nullptr);
-        eglMakeCurrent(display_, surface_, surface_, context_);
+        if (surface_ == EGL_NO_SURFACE) {
+            LOGE("initEGL: eglCreateWindowSurface failed");
+            return;
+        }
+
+        const EGLint ctxAttribs[] = {
+                EGL_CONTEXT_CLIENT_VERSION, 2,
+                EGL_NONE
+        };
+        context_ = eglCreateContext(display_, config_, EGL_NO_CONTEXT, ctxAttribs);
+        if (context_ == EGL_NO_CONTEXT) {
+            LOGE("initEGL: eglCreateContext failed");
+            return;
+        }
+
+        if (!eglMakeCurrent(display_, surface_, surface_, context_)) {
+            LOGE("initEGL: eglMakeCurrent failed");
+            return;
+        }
+
+        // Set viewport to surface size
+        EGLint width = 0, height = 0;
+        eglQuerySurface(display_, surface_, EGL_WIDTH, &width);
+        eglQuerySurface(display_, surface_, EGL_HEIGHT, &height);
+        glViewport(0, 0, width, height);
+        LOGI("initEGL: Viewport set to %d x %d", width, height);
     }
 
     void destroyEGL() {
@@ -124,8 +180,10 @@ private:
     ANativeWindow* window_ = nullptr;
 
     void initCamera() {
+
+
         manager_ = ACameraManager_create();
-        AImageReader_new(640, 480, AIMAGE_FORMAT_YUV_420_888, 4, &reader_);
+        AImageReader_new(640, 480, AIMAGE_FORMAT_YUV_420_888, 3, &reader_);
 
         AImageReader_ImageListener listener = {
                 .context = this,
@@ -133,10 +191,14 @@ private:
         };
         AImageReader_setImageListener(reader_, &listener);
 
-        while (AImageReader_getWindow(reader_, &readerWindow_) != AMEDIA_OK || !readerWindow_) {
-            usleep(10000);
+//        while (AImageReader_getWindow(reader_, &readerWindow_) != AMEDIA_OK || !readerWindow_) {
+//            usleep(10000);
+//        }
+        media_status_t winStat = AImageReader_getWindow(reader_, &readerWindow_);
+        if (winStat != AMEDIA_OK || !readerWindow_) {
+            LOGE("Failed to get AImageReader window: %d", winStat);
+            return;
         }
-
         ACameraIdList* ids;
         ACameraManager_getCameraIdList(manager_, &ids);
         const char* selected = ids->cameraIds[0];
@@ -180,19 +242,35 @@ private:
         manager_ = nullptr;
     }
 
+
+    void onImageAvailable(AImageReader* reader) {
+        AImage* img = nullptr;
+        media_status_t status = AImageReader_acquireLatestImage(reader, &img);
+        if (status != AMEDIA_OK || !img) {
+            LOGE("Failed to acquire image: %d", status);
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (latestImage_) AImage_delete(latestImage_);
+        latestImage_ = img;
+        cv_.notify_one();
+    }
+
+
     static void onImageAvailableStatic(void* ctx, AImageReader* reader) {
         reinterpret_cast<NativeApp*>(ctx)->onImageAvailable(reader);
     }
 
-    void onImageAvailable(AImageReader* reader) {
-        AImage* img = nullptr;
-        if (AImageReader_acquireLatestImage(reader, &img) == AMEDIA_OK && img) {
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (latestImage_) AImage_delete(latestImage_);
-            latestImage_ = img;
-            cv_.notify_one();
-        }
-    }
+//    void onImageAvailable(AImageReader* reader) {
+//        AImage* img = nullptr;
+//        if (AImageReader_acquireLatestImage(reader, &img) == AMEDIA_OK && img) {
+//            std::lock_guard<std::mutex> lock(mutex_);
+//            if (latestImage_) AImage_delete(latestImage_);
+//            latestImage_ = img;
+//            cv_.notify_one();
+//        }
+//    }
 
     // Render thread
     std::thread renderThread_;
@@ -208,9 +286,25 @@ private:
                 LOGE(" no window_ in startRenerLoop before wihle loop");
             }
             initEGL(window_);  // <-- MOVE EGL creation here
+            bool initialized_ = false;
+
+
+
 
             while (running_) {
-                LOGI("startRenderLoop running");
+
+
+
+                auto t0 = std::chrono::high_resolution_clock::now();
+
+                glUseProgram(shaderProgram_);  // optional when not using shaders
+
+
+                static std::random_device rd;
+                static std::mt19937 gen(rd());
+                static std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+
+//
                 AImage* image = nullptr;
                 {
                     std::unique_lock<std::mutex> lock(mutex_);
@@ -222,10 +316,20 @@ private:
                 }
 
                 if (image) {
-                    uploadYUV(image);  // ✅ Upload actual pixel data
-                    draw();            // ✅ Then draw the frame
+                    if (!initialized_) {
+                        setupGL(image);
+                        initialized_ = true;
+                    }
+
+                    uploadYUV(image);
+                    draw();
                     AImage_delete(image);
                 }
+
+                auto t1 = std::chrono::high_resolution_clock::now();
+                auto elapsedUs = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
+                __android_log_print(ANDROID_LOG_INFO, "Timing", "full render loop took %lld µs", elapsedUs);
+                LOGI("startRenderLoop running");
             }
 
             destroyEGL();  // clean up EGL in the same thread
@@ -238,8 +342,9 @@ private:
         cv_.notify_all();
         if (renderThread_.joinable()) renderThread_.join();
     }
-
+/*
     void draw() {
+
         if (eglGetCurrentContext() != context_) {
             if (!eglMakeCurrent(display_, surface_, surface_, context_)) {
                 LOGE("draw: eglMakeCurrent failed: 0x%x", eglGetError());
@@ -247,12 +352,10 @@ private:
             }
         }
 
-#include <chrono>
 
 
-        auto t0 = std::chrono::high_resolution_clock::now();
 
-        glUseProgram(0);  // optional when not using shaders
+        glUseProgram(shaderProgram_);
 
 
         static std::random_device rd;
@@ -268,10 +371,84 @@ private:
 
         glClear(GL_COLOR_BUFFER_BIT);
 
-        auto t1 = std::chrono::high_resolution_clock::now();
-        auto elapsedUs = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
-        __android_log_print(ANDROID_LOG_INFO, "Timing", "glClear took %lld µs", elapsedUs);
+        if (!eglSwapBuffers(display_, surface_)) {
+            LOGE("draw: eglSwapBuffers failed: 0x%x", eglGetError());
+        }
+    }
+/*
+ void draw() {
+     if (eglGetCurrentContext() != context_) {
+         if (!eglMakeCurrent(display_, surface_, surface_, context_)) {
+             LOGE("draw: eglMakeCurrent failed: 0x%x", eglGetError());
+             return;
+         }
+     }return
 
+     glUseProgram(shaderProgram_);
+
+     glClear(GL_COLOR_BUFFER_BIT);
+
+     glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+
+     GLint posLoc = glGetAttribLocation(shaderProgram_, "a_Position");
+     GLint texLoc = glGetAttribLocation(shaderProgram_, "a_TexCoord");
+
+     glEnableVertexAttribArray(posLoc);
+     glVertexAttribPointer(posLoc, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+     glEnableVertexAttribArray(texLoc);
+     glVertexAttribPointer(texLoc, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+
+     // Bind textures
+     glActiveTexture(GL_TEXTURE0);
+     glBindTexture(GL_TEXTURE_2D, texY_);
+     glActiveTexture(GL_TEXTURE1);
+     glBindTexture(GL_TEXTURE_2D, texU_);
+     glActiveTexture(GL_TEXTURE2);
+     glBindTexture(GL_TEXTURE_2D, texV_);
+
+     // Draw 2 triangles (quad)
+     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+     if (!eglSwapBuffers(display_, surface_)) {
+         LOGE("draw: eglSwapBuffers failed: 0x%x", eglGetError());
+     }
+ }
+*/
+
+    void draw() {
+        if (eglGetCurrentContext() != context_) {
+            if (!eglMakeCurrent(display_, surface_, surface_, context_)) {
+                LOGE("draw: eglMakeCurrent failed: 0x%x", eglGetError());
+                return;
+            }
+        }
+
+        glUseProgram(shaderProgram_);
+
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        glBindBuffer(GL_ARRAY_BUFFER, vbo_);
+
+        GLint posLoc = glGetAttribLocation(shaderProgram_, "a_Position");
+        GLint texLoc = glGetAttribLocation(shaderProgram_, "a_TexCoord");
+
+        glEnableVertexAttribArray(posLoc);
+        glVertexAttribPointer(posLoc, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(texLoc);
+        glVertexAttribPointer(texLoc, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+
+        // Bind YUV textures to respective texture units
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, texY_);
+
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, texU_);
+
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, texV_);
+
+        // Draw fullscreen quad
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
         if (!eglSwapBuffers(display_, surface_)) {
             LOGE("draw: eglSwapBuffers failed: 0x%x", eglGetError());
@@ -279,36 +456,40 @@ private:
     }
 
 
+
+
     void uploadYUV(AImage* image) {
         int width, height;
         AImage_getWidth(image, &width);
         AImage_getHeight(image, &height);
 
-        uint8_t *yPlane, *uPlane, *vPlane;
+        uint8_t *yPlane = nullptr, *uPlane = nullptr, *vPlane = nullptr;
         int yLen, uLen, vLen;
         AImage_getPlaneData(image, 0, &yPlane, &yLen);
         AImage_getPlaneData(image, 1, &uPlane, &uLen);
         AImage_getPlaneData(image, 2, &vPlane, &vLen);
 
-        int yStride, uStride, vStride;
-        AImage_getPlaneRowStride(image, 0, &yStride);
-        AImage_getPlaneRowStride(image, 1, &uStride);
-        AImage_getPlaneRowStride(image, 2, &vStride);
+        if (!yPlane || !uPlane || !vPlane) {
+            LOGE("One or more YUV planes are null.");
+            return;
+        }
+
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);  // very important for YUV alignment
 
         // Upload Y
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, texY_);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, yStride, height, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, yPlane);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_LUMINANCE, GL_UNSIGNED_BYTE, yPlane);
 
         // Upload U
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, texU_);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, uStride, height / 2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, uPlane);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width / 2, height / 2, GL_LUMINANCE, GL_UNSIGNED_BYTE, uPlane);
 
         // Upload V
         glActiveTexture(GL_TEXTURE2);
         glBindTexture(GL_TEXTURE_2D, texV_);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, vStride, height / 2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, vPlane);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width / 2, height / 2, GL_LUMINANCE, GL_UNSIGNED_BYTE, vPlane);
     }
     GLuint compileShader(GLenum type, const char* src) {
         GLuint shader = glCreateShader(type);
@@ -317,7 +498,7 @@ private:
         return shader;
     }
 
-    void setupGL() {
+    void setupGL(AImage* image) {
         GLuint vtx = compileShader(GL_VERTEX_SHADER, vertexShaderSrc);
         GLuint frg = compileShader(GL_FRAGMENT_SHADER, fragmentShaderSrc);
         shaderProgram_ = glCreateProgram();
@@ -330,7 +511,30 @@ private:
         glGenTextures(1, &texU_);
         glGenTextures(1, &texV_);
 
-        // Full-screen quad VBO
+        int width, height;
+        AImage_getWidth(image, &width);
+        AImage_getHeight(image, &height);
+
+        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);  // ensure proper byte alignment
+
+        // Y plane texture
+        glBindTexture(GL_TEXTURE_2D, texY_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width, height, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+        // U and V plane textures (half resolution)
+        glBindTexture(GL_TEXTURE_2D, texU_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width / 2, height / 2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+        glBindTexture(GL_TEXTURE_2D, texV_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, width / 2, height / 2, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+        // Fullscreen quad (NDC coords + UVs)
         const GLfloat quad[] = {
                 -1, -1,  0, 1,
                 1, -1,  1, 1,
@@ -346,6 +550,7 @@ private:
 
         glEnableVertexAttribArray(posLoc);
         glVertexAttribPointer(posLoc, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+
         glEnableVertexAttribArray(texLoc);
         glVertexAttribPointer(texLoc, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
 
@@ -370,3 +575,5 @@ extern "C" void ANativeActivity_onCreate(ANativeActivity* activity, void*, size_
         gApp.shutdown();
     };
 }
+
+
