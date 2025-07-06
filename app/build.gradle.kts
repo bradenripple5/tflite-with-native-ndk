@@ -91,7 +91,7 @@ dependencies {
     androidTestImplementation(libs.androidx.espresso.core)
 
     // TensorFlow Lite dependency
-//    implementation ("org.tensorflow:tensorflow-lite:2.7.0") // Replace with the desired version
+    implementation ("org.tensorflow:tensorflow-lite:2.7.0") // Replace with the desired version
 
 ////    implementation("org.tensorflow:tensorflow-lite-c:2.12.0") // only available up to 2.12.0
 //    implementation("org.tensorflow:tensorflow-lite-gpu:2.14.0")

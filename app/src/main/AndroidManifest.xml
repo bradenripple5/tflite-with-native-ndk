@@ -7,7 +7,7 @@
         android:label="@string/app_name"
         android:theme="@android:style/Theme.NoTitleBar">
 
-<!--        &lt;!&ndash; Java launcher activity &ndash;&gt;-->
+<!--&lt;!&ndash;        &lt;!&ndash; Java launcher activity &ndash;&gt;&ndash;&gt;-->
 <!--        <activity-->
 <!--            android:name="com.example.myapplication.MainActivity"-->
 <!--            android:exported="true"-->

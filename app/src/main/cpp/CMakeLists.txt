@@ -78,9 +78,10 @@ cmake_minimum_required(VERSION 3.10.2)
 project(NdkCamera)
 
 add_library(native-lib SHARED
-        native-lib.cpp
-        NativeCamera.cpp
-         Renderer.cpp)
+        native-lib.cpp)
+
+#        NativeCamera.cpp
+#         Renderer.cpp)
 
 find_library(log-lib log)
 find_library(android-lib android)
@@ -92,6 +93,7 @@ find_library(gles-lib GLESv2)
 target_link_libraries(native-lib
         ${log-lib}
         ${android-lib}
+        ${camera2ndk}
         ${camera2-lib}
         ${media-lib}
         ${egl-lib}
