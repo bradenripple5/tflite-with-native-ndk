@@ -534,13 +534,24 @@ private:
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-        // Fullscreen quad (NDC coords + UVs)
+//        // Fullscreen quad (NDC coords + UVs)
+//        const GLfloat quad[] = {
+//                -1, -1,  0, 1,
+//                1, -1,  1, 1,
+//                -1,  1,  0, 0,
+//                1,  1,  1, 0,
+//        };
+
+
+        // Rotated fullscreen quad 90 degrees to the right now video is in the correct orientation
         const GLfloat quad[] = {
-                -1, -1,  0, 1,
-                1, -1,  1, 1,
-                -1,  1,  0, 0,
-                1,  1,  1, 0,
+                // x, y, u, v
+                -1, -1,  1, 1,
+                1, -1,  1, 0,
+                -1,  1,  0, 1,
+                1,  1,  0, 0,
         };
+
         glGenBuffers(1, &vbo_);
         glBindBuffer(GL_ARRAY_BUFFER, vbo_);
         glBufferData(GL_ARRAY_BUFFER, sizeof(quad), quad, GL_STATIC_DRAW);
